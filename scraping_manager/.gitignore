@@ -1,0 +1,15 @@
+*.pyc
+__pycache__/
+.env
+.venv
+env/
+venv/
+*.sqlite3
+.DS_Store
+.idea/
+.vscode/
+*.log
+staticfiles/
+media/
+celerybeat-schedule
+celerybeat.pid
