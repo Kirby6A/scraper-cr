@@ -2,7 +2,9 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
+from django.db import transaction
 import asyncio
+from celery.result import AsyncResult
 from .models import Task, TaskExecution
 from .serializers import (
     TaskSerializer,
@@ -12,6 +14,7 @@ from .serializers import (
 )
 from .services.scraper_service import StagehandScraperService
 from .services.llm_service import LLMService
+from .tasks import execute_scraper_task, generate_code_task
 
 
 class TaskViewSet(viewsets.ModelViewSet):
@@ -28,15 +31,45 @@ class TaskViewSet(viewsets.ModelViewSet):
         serializer = ExecuteTaskSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        # Check if async mode is requested (default to True for Celery)
+        async_mode = request.data.get('async', True)
+        
+        # Check if code is available
+        if not task.generated_code:
+            return Response(
+                {'error': 'No generated code available for this task'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         # Create a new execution
         execution = TaskExecution.objects.create(
             task=task,
-            status='running',
-            metadata={'manual_trigger': True}
+            status='pending' if async_mode else 'running',
+            metadata={
+                'manual_trigger': True,
+                'async': async_mode
+            }
         )
         
-        # Execute the scraper if code is available
-        if task.generated_code:
+        if async_mode:
+            # Queue the task for async execution with Celery
+            # Use transaction.on_commit to ensure the execution is saved before the task runs
+            def queue_task():
+                result = execute_scraper_task.delay(str(execution.id))
+                # Update execution with Celery task ID
+                execution.metadata['celery_task_id'] = result.id
+                execution.save()
+                
+            transaction.on_commit(queue_task)
+            
+            return Response({
+                'execution_id': str(execution.id),
+                'status': 'queued',
+                'message': 'Task queued for background execution',
+                'async': True
+            }, status=status.HTTP_202_ACCEPTED)
+        else:
+            # Synchronous execution (old behavior)
             scraper_service = StagehandScraperService()
             
             # Validate code first
@@ -63,16 +96,11 @@ class TaskViewSet(viewsets.ModelViewSet):
             
             execution.completed_at = timezone.now()
             execution.save()
-        else:
-            execution.status = 'failed'
-            execution.error_message = 'No generated code available for this task'
-            execution.completed_at = timezone.now()
-            execution.save()
-        
-        return Response(
-            TaskExecutionSerializer(execution).data,
-            status=status.HTTP_201_CREATED
-        )
+            
+            return Response(
+                TaskExecutionSerializer(execution).data,
+                status=status.HTTP_201_CREATED
+            )
     
     @action(detail=True, methods=['get'])
     def executions(self, request, pk=None):
@@ -105,6 +133,65 @@ class TaskViewSet(viewsets.ModelViewSet):
         task.is_active = True
         task.save()
         return Response({'status': 'resumed'})
+    
+    @action(detail=False, methods=['get'])
+    def task_status(self, request):
+        """Check the status of a Celery task"""
+        task_id = request.query_params.get('task_id')
+        if not task_id:
+            return Response(
+                {'error': 'task_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get Celery task result
+        result = AsyncResult(task_id)
+        
+        response_data = {
+            'task_id': task_id,
+            'status': result.status,
+            'ready': result.ready(),
+        }
+        
+        if result.ready():
+            if result.successful():
+                response_data['result'] = result.result
+            else:
+                response_data['error'] = str(result.info)
+        
+        return Response(response_data)
+    
+    @action(detail=True, methods=['get'])
+    def execution_status(self, request, pk=None):
+        """Get detailed status of a task execution"""
+        execution_id = request.query_params.get('execution_id')
+        if not execution_id:
+            return Response(
+                {'error': 'execution_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            execution = TaskExecution.objects.get(id=execution_id)
+            serializer = TaskExecutionSerializer(execution)
+            data = serializer.data
+            
+            # If there's a Celery task ID, get its status
+            if execution.metadata and 'celery_task_id' in execution.metadata:
+                celery_task_id = execution.metadata['celery_task_id']
+                result = AsyncResult(celery_task_id)
+                data['celery_status'] = {
+                    'task_id': celery_task_id,
+                    'status': result.status,
+                    'ready': result.ready()
+                }
+            
+            return Response(data)
+        except TaskExecution.DoesNotExist:
+            return Response(
+                {'error': f'TaskExecution {execution_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
     
     @action(detail=True, methods=['post'])
     def generate_code(self, request, pk=None):

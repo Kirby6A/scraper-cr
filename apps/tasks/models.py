@@ -15,6 +15,10 @@ class Task(models.Model):
     llm_model = models.CharField(max_length=100, blank=True)  # gpt-4, claude-3
     llm_tokens_used = models.IntegerField(default=0)
     code_generation_metadata = models.JSONField(default=dict)  # Store prompts, examples used, etc.
+    # Schedule fields for periodic execution
+    schedule_enabled = models.BooleanField(default=False)
+    schedule_cron = models.CharField(max_length=200, blank=True, help_text="Cron expression for scheduling")
+    last_scheduled_run = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

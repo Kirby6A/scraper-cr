@@ -194,15 +194,99 @@ OPENAI_API_KEY=your-openai-api-key
 ANTHROPIC_API_KEY=your-anthropic-api-key
 ```
 
+### Phase 4 Complete!
+
+✅ Celery configuration for background tasks
+✅ Async scraper execution without "signal" errors  
+✅ Task status monitoring endpoints
+✅ Scheduled task support with Celery Beat
+✅ Management commands for workers
+✅ Transaction-safe task dispatch
+
+### Phase 4 Features
+
+#### Running Celery Services
+
+**1. Start Redis (required):**
+```bash
+redis-server
+```
+
+**2. Start Celery Worker:**
+```bash
+python manage.py run_worker
+# Or with options:
+python manage.py run_worker --loglevel=debug --concurrency=4
+```
+
+**3. Start Celery Beat (for scheduled tasks):**
+```bash
+python manage.py run_beat
+```
+
+#### Async Scraper Execution
+
+**Execute scraper asynchronously (default):**
+```bash
+curl -X POST http://localhost:8000/api/v1/tasks/{task_id}/execute/
+```
+
+**Force synchronous execution (old behavior):**
+```bash
+curl -X POST http://localhost:8000/api/v1/tasks/{task_id}/execute/ \
+  -H "Content-Type: application/json" \
+  -d '{"async": false}'
+```
+
+**Check execution status:**
+```bash
+curl "http://localhost:8000/api/v1/tasks/execution_status/?execution_id={execution_id}"
+```
+
+### Complete Workflow with Celery
+
+1. **Start all services:**
+```bash
+# Terminal 1: Redis
+redis-server
+
+# Terminal 2: Django
+python manage.py runserver
+
+# Terminal 3: Celery Worker
+python manage.py run_worker
+```
+
+2. **Create and execute a task:**
+```bash
+# Create task
+curl -X POST http://localhost:8000/api/v1/tasks/ \
+  -d '{"name": "Test Scraper", "natural_language_prompt": "Scrape prices"}'
+
+# Generate code
+curl -X POST http://localhost:8000/api/v1/tasks/{task_id}/generate_code/
+
+# Execute asynchronously
+curl -X POST http://localhost:8000/api/v1/tasks/{task_id}/execute/
+```
+
+### Benefits of Phase 4
+
+- ✅ **No more "signal" errors** - Scrapers run in worker processes
+- ✅ **Concurrent execution** - Multiple scrapers simultaneously
+- ✅ **Non-blocking API** - Instant responses
+- ✅ **Task monitoring** - Real-time progress tracking
+- ✅ **Scheduled scraping** - Cron expressions support
+- ✅ **Automatic retries** - Failed tasks retry automatically
+
 ### Next Steps
 
-- Phase 4: Celery automation (scheduled execution)
-- Phase 5: Advanced data management
+- Phase 5: Advanced data management and querying
 - Phase 6: Frontend UI and production features
 
 ### Development Notes
 
-- The database is configured to use SQLite for development. Update `DATABASES` in settings for PostgreSQL/Supabase.
-- CORS is configured for `localhost:3000` for future React frontend.
-- API uses token authentication (to be implemented in Phase 6).
-- Celery broker URL is configured but Celery tasks are not yet implemented.
+- Database configured for PostgreSQL/Supabase via DATABASE_URL
+- CORS configured for `localhost:3000` for React frontend
+- Celery uses Redis as message broker
+- API uses DRF's browsable API for testing
